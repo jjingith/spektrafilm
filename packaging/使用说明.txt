@@ -1,0 +1,33 @@
+spektrafilm 绿色解压版
+========================
+
+【启动】
+双击 spektrafilm.exe 即可。无需安装 Python 或任何依赖。
+请保持整个文件夹完整，不要只复制 exe 单个文件。
+
+【语言与 GPU】
+打开右侧「设置」选项卡 → 「系统」类别：
+  - 语言：默认（跟随系统）/ 简体中文 / English
+  - GPU 加速：自动检测 / 开启 / 关闭
+修改后需重启程序生效。
+
+GPU 加速需要：
+  - NVIDIA 显卡 + 支持 CUDA 12.x 的驱动
+  - 未满足条件时自动回退 CPU，不影响使用
+
+【界面说明】
+  - 左下角：图像尺寸与 PPI 信息
+  - 底部 EXIF：查看当前图像的完整元数据
+  - 底部 A/B + 滑条：前后对比，左=原图，右=模拟结果
+  - 底部 ccw/cw：旋转；100%/200%/400%：缩放；reset view：复位
+
+【常见问题】
+  - 若启动失败，同目录下会生成 spektrafilm_crash.log，请查看其中的报错信息。
+  - 首次启动会稍慢（需要初始化 Qt 与着色器缓存），之后会快一些。
+  - 处理大尺寸 RAW（如 61MP）时，先显示快速预览，再在后台完成全分辨率加载。
+
+【许可】
+GPL-3.0-or-later。profiles/LUT 数据为 CC BY-SA 4.0。
+本项目为第三方非官方分支，与上游作者无隶属或背书关系。
+上游：https://github.com/andreavolpato/spektrafilm
+分支：https://github.com/jjingith/spektrafilm/tree/zh-cn-gpu

@@ -43,5 +43,13 @@
   "Simulation": "模拟",
   "JSON (*.json)": "JSON (*.json)",
   "output.jpg": "output.jpg",
-  "gui_state.json": "gui_state.json"
+  "gui_state.json": "gui_state.json",
+  "{width} px × {height} px ({ppi} ppi)": "{width} 像素 × {height} 像素（{ppi} ppi）",
+  "Show EXIF info": "显示 EXIF 信息",
+  "Image information": "图像信息",
+  "No image loaded": "尚未加载图像",
+  "Before / After": "前后对比",
+  "Loading full resolution...": "正在加载全分辨率图像…",
+  "Failed to load full-resolution RAW.\n\n{message}": "加载全分辨率 RAW 失败。\n\n{message}",
+  "Language / GPU settings take effect after restarting the app.": "语言和 GPU 设置将在重启程序后生效。"
 }

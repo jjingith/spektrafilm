@@ -32,6 +32,8 @@ import numpy as np
 from matplotlib.path import Path as MplPath
 from scipy.ndimage import map_coordinates
 
+from spektrafilm.utils.fast_color import rgb_to_xyz, xyz_to_rgb
+
 
 # ---------------------------------------------------------------------------
 # Spec dataclass
@@ -908,10 +910,9 @@ def compress_rgb_oklch_chroma(
     white = np.asarray(cs.whitepoint, dtype=float)
 
     # RGB → XYZ → OkLab → OkLch (L, C, h).
-    xyz = np.asarray(colour.RGB_to_XYZ(
-        rgb, colourspace=output_color_space,
-        illuminant=white, apply_cctf_decoding=False,
-    ))
+    xyz = rgb_to_xyz(
+        rgb, output_color_space, illuminant=white,
+    )
     lab = np.asarray(colour.XYZ_to_Oklab(xyz))
     L = lab[..., 0]
     a = lab[..., 1]
@@ -941,10 +942,9 @@ def compress_rgb_oklch_chroma(
     b_new = C_new * np.sin(h)
     lab_new = np.stack([L, a_new, b_new], axis=-1)
     xyz_new = np.asarray(colour.Oklab_to_XYZ(lab_new))
-    rgb_new = np.asarray(colour.XYZ_to_RGB(
-        xyz_new, colourspace=output_color_space,
-        illuminant=white, apply_cctf_encoding=False,
-    ))
+    rgb_new = xyz_to_rgb(
+        xyz_new, output_color_space, illuminant=white,
+    )
     return rgb_new
 
 
@@ -977,10 +977,9 @@ def compress_rgb_oklrab_chroma(
     cs = colour.RGB_COLOURSPACES[output_color_space]
     white = np.asarray(cs.whitepoint, dtype=float)
 
-    xyz = np.asarray(colour.RGB_to_XYZ(
-        rgb, colourspace=output_color_space,
-        illuminant=white, apply_cctf_decoding=False,
-    ))
+    xyz = rgb_to_xyz(
+        rgb, output_color_space, illuminant=white,
+    )
     lab = np.asarray(colour.XYZ_to_Oklab(xyz))
     L = lab[..., 0]
     a = lab[..., 1]
@@ -1009,10 +1008,9 @@ def compress_rgb_oklrab_chroma(
     # changes L, and its result already lives in `L` here.
     lab_new = np.stack([L, a_new, b_new], axis=-1)
     xyz_new = np.asarray(colour.Oklab_to_XYZ(lab_new))
-    rgb_new = np.asarray(colour.XYZ_to_RGB(
-        xyz_new, colourspace=output_color_space,
-        illuminant=white, apply_cctf_encoding=False,
-    ))
+    rgb_new = xyz_to_rgb(
+        xyz_new, output_color_space, illuminant=white,
+    )
     return rgb_new
 
 
@@ -1060,10 +1058,9 @@ def compress_rgb_jzazbz_chroma(
     white = np.asarray(cs.whitepoint, dtype=float)
 
     # RGB → XYZ (cd/m² at Y_w) → JzAzBz → polar.
-    xyz = np.asarray(colour.RGB_to_XYZ(
-        rgb, colourspace=output_color_space,
-        illuminant=white, apply_cctf_decoding=False,
-    ))
+    xyz = rgb_to_xyz(
+        rgb, output_color_space, illuminant=white,
+    )
     jab = np.asarray(colour.XYZ_to_Jzazbz(xyz * _JZAZBZ_Y_W_CDM2))
     Jz = jab[..., 0]
     az = jab[..., 1]
@@ -1093,10 +1090,9 @@ def compress_rgb_jzazbz_chroma(
     bz_new = Cz_new * np.sin(hz)
     jab_new = np.stack([Jz, az_new, bz_new], axis=-1)
     xyz_new = np.asarray(colour.Jzazbz_to_XYZ(jab_new)) / _JZAZBZ_Y_W_CDM2
-    rgb_new = np.asarray(colour.XYZ_to_RGB(
-        xyz_new, colourspace=output_color_space,
-        illuminant=white, apply_cctf_encoding=False,
-    ))
+    rgb_new = xyz_to_rgb(
+        xyz_new, output_color_space, illuminant=white,
+    )
     return rgb_new
 
 
@@ -1147,10 +1143,9 @@ def compress_rgb_cam16ucs_chroma(
     xyz_w = _output_cs_whitepoint_xyz(output_color_space)
 
     # RGB → XYZ → CAM16-UCS → polar.
-    xyz = np.asarray(colour.RGB_to_XYZ(
-        rgb, colourspace=output_color_space,
-        illuminant=white, apply_cctf_decoding=False,
-    ))
+    xyz = rgb_to_xyz(
+        rgb, output_color_space, illuminant=white,
+    )
     jab = np.asarray(colour.XYZ_to_CAM16UCS(
         xyz, XYZ_w=xyz_w, L_A=_CAM16UCS_L_A, Y_b=_CAM16UCS_Y_B,
     ))
@@ -1184,10 +1179,9 @@ def compress_rgb_cam16ucs_chroma(
     xyz_new = np.asarray(colour.CAM16UCS_to_XYZ(
         jab_new, XYZ_w=xyz_w, L_A=_CAM16UCS_L_A, Y_b=_CAM16UCS_Y_B,
     ))
-    rgb_new = np.asarray(colour.XYZ_to_RGB(
-        xyz_new, colourspace=output_color_space,
-        illuminant=white, apply_cctf_encoding=False,
-    ))
+    rgb_new = xyz_to_rgb(
+        xyz_new, output_color_space, illuminant=white,
+    )
     return rgb_new
 
 

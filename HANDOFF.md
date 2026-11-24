@@ -1,7 +1,7 @@
 # spektrafilm 汉化 + GPU 分支交接表
 
 > 用途：换电脑后按本表恢复环境、验证现状、继续做 GPU 阶段二。
-> 本文件随 `zh-cn-gpu` 分支一起提交；最后更新：2026-11-24。
+> 本文件随 `zh-cn-gpu` 分支一起提交；最后更新：2026-11-24（含本机 RAW 加载与色彩链矩阵化实测）。
 
 ## 1. 项目与分支
 
@@ -92,6 +92,50 @@ spektrafilm
 
 > 整次模拟只有约 1.4 倍，因为其余阶段仍在 CPU；光谱阶段本身约 4–28 倍。
 
+### 5.3 色彩链矩阵化加速（2026-11-24，本机实测）
+
+发现 colour-science 的高层色彩函数在整幅大图上被数组 reshape/domain 缩放开销主导，
+而它们在关闭 CCTF 时本质是 3×3 线性矩阵。改为「用 3×3 单位阵探针让 colour 构建一次
+组合矩阵 → 用 einsum 应用到整图」，**数值逐位一致**（最大误差 ≤9e-16），无需 GPU。
+
+| 位置 | 加速 | 说明 |
+|---|---|---|
+| RAW 白平衡色适应 | ~18× | `_wb_adaptation_matrix` 合并 RGB→XYZ→VonKries→XYZ→RGB |
+| RAW ACES→输出色彩空间 | ~20× | `_output_transform_matrix`，CCTF 编码单独施加 |
+| RAW 完整加载（61MP ARW） | **9.75s→4.89s (2.0×)** | as_shot→sRGB；自定义 3200K 11.0s→5.92s |
+| 扫描色彩链 RGB↔XYZ | ~1.2× | `fast_color.py`，覆盖 gamut_compression + scanning |
+| 扫描 XYZ→RGB（动态光源） | ~15× | 复用 `fast_color.xyz_to_rgb`（默认 CAT02 与 colour 一致） |
+
+- 新增 `src/spektrafilm/utils/fast_color.py`：`rgb_to_xyz()` / `xyz_to_rgb()`，
+  默认色适应为 **CAT02**（与 colour-science 默认一致）；illuminant 与色彩空间白点
+  不同时 CAT02 生效，必须保留，否则数值会错（实测差 0.26）。
+- 测试环境：本机 venv 在 `测试版本/spektrafilm/`，`pyvenv.cfg` 的 home 已从旧机
+  `C:\Users\imzjj` 改指本机 Python 3.13（`C:\Users\Administrator\.workbuddy\...\3.13.12`）；
+  使用该 venv 的 python 时须设 `PYTHONPATH=<仓库>/src` 才会加载本工作区源码（venv 内是
+  be9132d 的拷贝安装）。
+- 验证：`tests/test_fast_color.py`（25 passed）；真实 RAW 用
+  `D:\屠库\导入\20260328 樱花园\DSC08046.ARW`（61MP，9564×6376）。
+- **既有失败 26 项**（与本次改动无关，HEAD 基线同样失败）：GUI 布局/persistence、
+  `test_lut_mode`（`GrainParams.mult_usm_amount` 属性缺失）、3 项 regression snapshot
+  （源码与 baseline 快照版本不一致）。改动前后均为 753 passed / 26 failed。
+
+### 5.4 GUI 功能增强（2026-11-24）
+
+| 功能 | 位置 | 说明 |
+|---|---|---|
+| 图像信息栏 | 窗口左下角状态栏 | 显示 `宽 × 高（ppi）`；PPI 读 EXIF `XResolution`，缺失回退 72 |
+| EXIF 按钮 | 底部工具栏（`EXIF`） | 弹出当前输入图像的完整 EXIF/IPTC/XMP 列表 |
+| 前后对比 | 底部 `A/B` 开关 + 滑条 | 一张图上竖直分割线：左=输入、右=输出；滑条 0=全输出，100=全输入 |
+| 系统设置 | 设置页新增「系统」类别 | 语言（默认/简中/English）与 GPU（自动/开/关），**重启生效** |
+| 窗口/任务栏图标 | `napari_layout._app_window_icon()` | `assets/app_icon.ico`（多尺寸），同时用于窗口与任务栏 |
+| RAW 分级加载 | `controller.load_raw_image()` | 先 half_size+linear 快速预览（~1s），后台线程全尺寸替换 |
+| 字体路径修复 | `spektrafilm_gui/font_fix.py` | freetype 打不开中文路径字体 → 复制到 ASCII 目录并重定向；**内置，打包版同样生效** |
+
+- 语言/GPU 偏好存 QSettings（`system/language`、`system/gpu`），启动时
+  `system_prefs.apply_to_environment()` 写入环境变量，因此**不需改 launch_gui.py**。
+- 对比图层常量 `COMPARE_LAYER_NAME`，由 `ViewerLayerService.set_compare_layer()` 拼合
+  before/after 两个图层数据；输出更新后自动刷新。
+
 ## 6. 关键改动文件
 
 | 文件 | 作用 | 注意事项 |
@@ -109,6 +153,19 @@ spektrafilm
 | `src/spektrafilm/runtime/stages/scanning.py` | 扫描投影接入 GPU | 同上 |
 | `pyproject.toml` | 可选 `gpu` 依赖、`locale/*.json` 包数据 | 打包时勿漏 locale |
 | `README.zh-CN.md` | 分支说明、安装、语言/GPU 用法、实测 | 上游 README 顶部已加导航 |
+| `src/spektrafilm/utils/fast_color.py` | RGB↔XYZ 矩阵化（默认 CAT02） | 新增；勿改成 `chromatic_adaptation_transform=None` |
+| `src/spektrafilm/utils/raw_file_processor.py` | WB 色适应 + ACES→输出转换矩阵化 | `_wb_adaptation_matrix` / `_output_transform_matrix` 有缓存；CCTF 编码须单独施加 |
+| `src/spektrafilm/utils/gamut_compression.py` | 5 个压缩函数的 RGB↔XYZ 换用 fast_color | 建表处 `_build_polar_perceptual_c_max_table` 仍用 colour 原调用 |
+| `src/spektrafilm/runtime/stages/scanning.py` | 场景 XYZ→RGB 换用 fast_color | 动态 illuminant + CAT02，勿丢 illuminant 参数 |
+| `tests/test_fast_color.py` | 锁定 fast_color 与 colour 逐位一致 | 新增；含动态 illuminant/CAT02 场景 |
+| `src/spektrafilm_gui/font_fix.py` | 中文路径字体修复 | 新增；`create_app()` 最早调用，勿删 |
+| `src/spektrafilm_gui/system_prefs.py` | 语言/GPU 偏好（QSettings） | 新增；`apply_to_environment()` 须在控件创建前 |
+| `src/spektrafilm_gui/options.py` → 用 `system_prefs` 的 Enum | 语言/GPU 枚举 | `AppLanguage` / `GpuMode` 定义在 system_prefs |
+| `src/spektrafilm_gui/widget_sections.py` | `SystemSection`、`_build_button` 等 | 「系统」类别 |
+| `src/spektrafilm_gui/controller_layers.py` | `set_compare_layer` / `remove_compare_layer` | 对比拼合图 |
+| `src/spektrafilm_gui/controller.py` | 分级 RAW 加载、EXIF 弹窗、对比刷新 | `_on_raw_loaded` 用 generation 防竞态 |
+| `src/spektrafilm/utils/io.py` | `read_image_ppi()` | 读 EXIF 分辨率 |
+| `packaging/spektrafilm.spec` + `packaging/entry.py` | PyInstaller 绿色版 | 新增；`--onedir`，含 locale/assets/data |
 
 ## 7. 验证命令
 
@@ -153,10 +210,16 @@ out = simulate(image, p)
 | `printing.expose` | 2.9 s | 已含 GPU 光谱 2.1 s，其余为扩散/模糊 |
 | `preprocess` | 0.7 s | 色彩空间转换/自动曝光 |
 
-建议顺序：
+建议顺序（2026-11-24 本机剖析更新，4MP）：
 
-1. **扫描色彩链**：预计算 RGB↔XYZ 矩阵，用 CuPy 矩阵乘替代 `colour` 调用；为 sRGB/ProPhoto/P3/Rec2020 实现 CuPy CCTF；CAM16-UCS 压缩按 `gamut_compression.py` 公式移植（最重，单独提交）。
-2. **扫描/印放模糊**：`cupyx.scipy.ndimage.gaussian_filter` 或 CuPy FFT 替代 `fast_gaussian_filter`/`fftw`；注意边界与 sigma 单位。
+| 步骤 | 实测耗时 | 备注 |
+|---|---:|---|
+| CAM16UCS 压缩（全流程） | 12.0 s | `XYZ_to_CAM16UCS` 3.7s + `CAM16UCS_to_XYZ` 3.8s + RGB↔XYZ 1.4s + 查表 0.57s |
+| `fast_gaussian_filter` sigma=2 | 6.1 s | numba 并行 FIR，已高度优化，GPU 化需逐位复刻 IIR 边界/浮点顺序 |
+| `XYZ_to_RGB` / `RGB_to_XYZ` | 0.68 s /call | **已矩阵化**（见 5.3），剩余为 CAM16/OkLab 内部调用 |
+
+1. **扫描色彩链 — 部分完成**：预计算 RGB↔XYZ 矩阵已落地（`fast_color.py`，CPU 侧 ~15×，逐位一致），覆盖 `gamut_compression.py` 5 个压缩函数与 `scanning.py` 场景 XYZ→RGB。**剩余**：CAM16-UCS 正逆变换的 CuPy 移植（最重，需复刻 colour 的 domain-range 100/1 缩放 + 默认 `compute_H=False`，单独提交）；CuPy CCTF 编码。
+2. **扫描/印放模糊**：`cupyx.scipy.ndimage.gaussian_filter` 或 CuPy FFT 替代 `fast_gaussian_filter`/`fftw`；注意边界与 sigma 单位。因现有 numba 实现已很快且用 float64，需评估数值对齐成本。
 3. **Hanatos2025 上采样**：tc_lut 三线性/双三次查表移植到 CuPy，保留 CPU 回退。
 4. **显影曲线/成色剂**：密度曲线 1D 插值可用 CuPy `searchsorted`/线性插值；DIR 扩散卷积走 CuPy。
 5. **颗粒**：`cupy.random` 复现 lognormal/poisson；注意随机种子与 CPU 不完全一致，验收用统计/分布测试。

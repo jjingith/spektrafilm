@@ -12,6 +12,7 @@ from spektrafilm.model.illuminants import standard_illuminant
 from spektrafilm.utils.conversions import density_to_light
 from spektrafilm.utils.gamut_compression import compress_rgb
 from spektrafilm.utils.gpu import project_log
+from spektrafilm.utils.fast_color import xyz_to_rgb as _fast_xyz_to_rgb
 
 
 class ScanningStage:
@@ -77,10 +78,9 @@ class ScanningStage:
         illuminant_xyz = contract("k,kl->l", scan_illuminant, STANDARD_OBSERVER_CMFS[:]) / normalization
         illuminant_xy = colour.XYZ_to_xy(illuminant_xyz)
         xyz = add_glare(xyz, illuminant_xyz, glare)
-        rgb = colour.XYZ_to_RGB(
+        rgb = _fast_xyz_to_rgb(
             xyz,
-            colourspace=self._io.output_color_space,
-            apply_cctf_encoding=False,
+            self._io.output_color_space,
             illuminant=illuminant_xy,
         )
         # Output gamut compression. Compresses chromaticities the

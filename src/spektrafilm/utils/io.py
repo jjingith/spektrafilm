@@ -50,6 +50,29 @@ def read_image_metadata(filename: str) -> ImageMetadata | None:
     )
 
 
+def read_image_ppi(filename: str, default: float = 72.0) -> float:
+    """Read horizontal resolution (PPI) from an image's EXIF.
+
+    EXIF XResolution is stored as a rational; exiv2's ``toFloat()`` gives the
+    value directly. Falls back to ``default`` (72 ppi) when missing, zero or
+    unreadable.
+    """
+    metadata = read_image_metadata(filename)
+    if metadata is None:
+        return default
+    exif = metadata.exif
+    for key in ('Exif.Photo.XResolution', 'Exif.Image.XResolution'):
+        if key not in exif:
+            continue
+        try:
+            value = float(exif[key].toFloat())
+            if np.isfinite(value) and value > 0:
+                return value
+        except (ValueError, TypeError, RuntimeError):
+            continue
+    return default
+
+
 def write_image_metadata(
     filename: str,
     source_metadata: ImageMetadata | None = None,

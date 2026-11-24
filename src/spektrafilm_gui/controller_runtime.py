@@ -231,3 +231,48 @@ def execute_simulation_request(
         use_display_transform=request.use_display_transform,
         status_message=display_status,
     )
+
+@dataclass(slots=True)
+class RawLoadRequest:
+    path: str
+    white_balance: object
+    temperature: float | None
+    tint: float | None
+    lens_correction: bool
+    output_colorspace: str
+    output_cctf_encoding: bool
+    generation: int = 0
+
+
+class RawLoadSignals(QObject):
+    finished = Signal(object, object, object)  # ndarray, path, lens_info dict
+    failed = Signal(str)
+
+
+class RawLoadWorker(QRunnable):
+    """Load and process a RAW file off the GUI thread."""
+
+    def __init__(self, request: RawLoadRequest, *, load_fn: Callable[..., np.ndarray]):
+        super().__init__()
+        self._request = request
+        self._load_fn = load_fn
+        self.signals = RawLoadSignals()
+
+    def run(self) -> None:
+        req = self._request
+        lens_info: dict[str, str] = {}
+        try:
+            image = self._load_fn(
+                req.path,
+                white_balance=req.white_balance,
+                temperature=req.temperature,
+                tint=req.tint,
+                lens_correction=req.lens_correction,
+                output_colorspace=req.output_colorspace,
+                output_cctf_encoding=req.output_cctf_encoding,
+                lens_info_out=lens_info,
+            )
+        except Exception as exc:  # noqa: BLE001 - report any loader failure to GUI
+            self.signals.failed.emit(f'{type(exc).__name__}: {exc}')
+            return
+        self.signals.finished.emit(image, req.path, lens_info)

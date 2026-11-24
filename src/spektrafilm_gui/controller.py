@@ -25,7 +25,7 @@ from spektrafilm_gui.persistence import (
     save_gui_state_to_path,
 )
 from spektrafilm_gui.state import PROJECT_DEFAULT_GUI_STATE, digest_after_selection, gui_state_from_params
-from spektrafilm_gui.napari_layout import dialog_parent, reset_viewer_camera, set_canvas_background, set_status
+from spektrafilm_gui.napari_layout import dialog_parent, reset_viewer_camera, set_canvas_background, set_image_info_text, set_status
 from spektrafilm_gui.params_mapper import build_params_from_state
 from spektrafilm_gui.state_bridge import apply_gui_state, collect_gui_state
 from spektrafilm_gui.widgets import WidgetBundle
@@ -122,6 +122,10 @@ def write_image_metadata(*args, **kwargs):
     return import_module("spektrafilm.utils.io").write_image_metadata(*args, **kwargs)
 
 
+def read_image_ppi(*args, **kwargs):
+    return import_module("spektrafilm.utils.io").read_image_ppi(*args, **kwargs)
+
+
 def load_and_process_raw_file(*args, **kwargs):
     return import_module('spektrafilm.utils.raw_file_processor').load_and_process_raw_file(*args, **kwargs)
 
@@ -157,6 +161,40 @@ class GuiController:
         self._auto_preview_scheduled = False
         self._pending_auto_preview = False
         self._active_simulation_reports_status = True
+        self._compare_active = False
+        self._compare_split = 0.5
+        self._raw_load_generation = 0
+        self._active_raw_worker = None
+
+    def set_compare_enabled(self, enabled: bool) -> None:
+        """Enable/disable the before/after wipe overlay."""
+        self._compare_active = bool(enabled)
+        if not self._compare_active:
+            self._layers.remove_compare_layer()
+        else:
+            self._refresh_compare_layer()
+
+    def set_compare_split(self, value: float) -> None:
+        """Update wipe position (0 = all output, 1 = all input)."""
+        self._compare_split = max(0.0, min(1.0, float(value)))
+        if self._compare_active:
+            self._refresh_compare_layer()
+
+    def _refresh_compare_layer(self) -> None:
+        before_layer = self._layers.preview_input_layer()
+        after_layer = self._layers.output_layer()
+        before_data = np.asarray(before_layer.data) if before_layer is not None else None
+        after_data = np.asarray(after_layer.data) if after_layer is not None else None
+        if before_data is None or after_data is None:
+            self._layers.remove_compare_layer()
+            return
+        world_size = self._layers.current_image_world_size()
+        self._layers.set_compare_layer(
+            before_data,
+            after_data,
+            split=self._compare_split,
+            image_world_size=world_size,
+        )
 
     def show_startup_placeholder(self) -> None:
         if self._white_border_layer() is not None:
@@ -178,26 +216,94 @@ class GuiController:
         )
         self._home_input_stack()
 
+    def on_system_settings_changed(self) -> None:
+        """Notify that language/GPU changes require a restart."""
+        QMessageBox.information(
+            dialog_parent(self._viewer),
+            tr('Image information'),
+            tr('Language / GPU settings take effect after restarting the app.'),
+        )
+
+    def show_exif_info(self) -> None:
+        """Show EXIF/IPTC/XMP metadata of the current input image in a dialog."""
+        path = self._current_input_path
+        if not path:
+            QMessageBox.information(
+                dialog_parent(self._viewer),
+                tr('Show EXIF info'),
+                tr('No image loaded'),
+            )
+            return
+
+        lines: list[str] = []
+        metadata = read_image_metadata(path)
+        if metadata is None:
+            lines.append(tr('No image loaded'))
+        else:
+            exif = metadata.exif
+            try:
+                for key in exif.keys():
+                    try:
+                        value = str(exif[key].value()).strip()
+                    except Exception:
+                        continue
+                    if value:
+                        lines.append(f'{key}: {value}')
+            except Exception:
+                pass
+            if not lines:
+                lines.append(tr('No image loaded'))
+        QMessageBox.information(
+            dialog_parent(self._viewer),
+            tr('Image information'),
+            '\n'.join(lines),
+        )
+
     def load_input_image(self, path: str) -> None:
         image = load_image_oiio(path)[..., :3]
         self._current_input_path = path
         self._set_or_add_input_stack(image)
         self._request_auto_preview_if_enabled()
 
+    def _raw_load_kwargs(self, gui_state) -> dict:
+        return dict(
+            white_balance=gui_state.gui_only.load_raw.white_balance,
+            temperature=gui_state.gui_only.load_raw.temperature,
+            tint=gui_state.gui_only.load_raw.tint,
+            lens_correction=gui_state.gui_only.load_raw.lens_correction,
+            output_colorspace=gui_state.input_image.io.input_color_space,
+            output_cctf_encoding=gui_state.input_image.io.input_cctf_decoding,
+        )
+
+    def _report_raw_loaded_status(self, lens_info: dict[str, str], lens_correction: bool) -> None:
+        lens_summary = lens_info.get('summary')
+        if lens_summary:
+            set_status(
+                self._viewer,
+                trf('Loaded raw and applied lens correction: {lens_summary}', lens_summary=lens_summary),
+            )
+        elif lens_correction:
+            set_status(self._viewer, tr("Loaded raw, lens correction not applied"))
+        else:
+            set_status(self._viewer, tr("Loaded raw"))
+
     def load_raw_image(self, path: str) -> None:
+        """Two-stage RAW load: quick half-size preview now, full-res in background."""
         gui_state = collect_gui_state(widgets=self._widgets)
+        kwargs = self._raw_load_kwargs(gui_state)
+
+        self._raw_load_generation += 1
+        generation = self._raw_load_generation
+
+        # Stage 1: quick low-quality demosaic so the user sees the image in ~1 s.
         set_status(self._viewer, tr("Loading raw..."), timeout_ms=0)
-        lens_info: dict[str, str] = {}
+        preview_kwargs = dict(kwargs)
+        preview_kwargs['half_size'] = True
+        preview_kwargs['demosaic_quality'] = 0
+        preview_lens_info: dict[str, str] = {}
         try:
-            image = load_and_process_raw_file(
-                path,
-                white_balance=gui_state.gui_only.load_raw.white_balance,
-                temperature=gui_state.gui_only.load_raw.temperature,
-                tint=gui_state.gui_only.load_raw.tint,
-                lens_correction=gui_state.gui_only.load_raw.lens_correction,
-                output_colorspace=gui_state.input_image.io.input_color_space,
-                output_cctf_encoding=gui_state.input_image.io.input_cctf_decoding,
-                lens_info_out=lens_info,
+            quick_image = load_and_process_raw_file(
+                path, lens_info_out=preview_lens_info, **preview_kwargs
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(
@@ -209,19 +315,47 @@ class GuiController:
             return
 
         self._current_input_path = path
-        self._set_or_add_input_stack(image)
+        self._set_or_add_input_stack(quick_image)
+        set_status(self._viewer, tr('Loading full resolution...'), timeout_ms=0)
 
-        lens_summary = lens_info.get('summary')
-        if lens_summary:
-            set_status(
-                self._viewer,
-                trf('Loaded raw and applied lens correction: {lens_summary}', lens_summary=lens_summary),
+        # Stage 2: full-resolution, high-quality load on a worker thread.
+        request = runtime.RawLoadRequest(path=path, generation=generation, **kwargs)
+        worker = runtime.RawLoadWorker(request, load_fn=load_and_process_raw_file)
+        worker.signals.finished.connect(
+            lambda image, loaded_path, lens_info: self._on_raw_loaded(
+                image, loaded_path, lens_info, generation, kwargs
             )
-        elif gui_state.gui_only.load_raw.lens_correction:
-            set_status(self._viewer, tr("Loaded raw, lens correction not applied"))
-        else:
-            set_status(self._viewer, tr("Loaded raw"))
+        )
+        worker.signals.failed.connect(
+            lambda message: self._on_raw_failed(message, generation)
+        )
+        self._active_raw_worker = worker
+        self._thread_pool.start(worker)
         self._request_auto_preview_if_enabled()
+
+    def _on_raw_loaded(self, image, loaded_path, lens_info, generation, kwargs) -> None:
+        if generation != self._raw_load_generation:
+            return
+        self._active_raw_worker = None
+        if loaded_path != self._current_input_path:
+            return
+        self._current_input_image = image
+        self._update_preview_cache(
+            image, home_input_stack=False, hide_output=True
+        )
+        self._report_raw_loaded_status(lens_info, kwargs.get('lens_correction', False))
+        self._request_auto_preview_if_enabled()
+
+    def _on_raw_failed(self, message: str, generation: int) -> None:
+        if generation != self._raw_load_generation:
+            return
+        self._active_raw_worker = None
+        set_status(self._viewer, tr('Load raw failed'))
+        QMessageBox.warning(
+            dialog_parent(self._viewer),
+            tr('Load raw'),
+            trf('Failed to load full-resolution RAW.\n\n{message}', message=message),
+        )
 
     def refresh_preview_cache(self, *_args) -> None:
         input_image = self._current_input_image
@@ -502,6 +636,25 @@ class GuiController:
             home_input_stack=True,
             hide_output=True,
         )
+        self._update_image_info(image)
+
+    def _update_image_info(self, image: np.ndarray) -> None:
+        """Refresh the bottom-left 'W px × H px (ppi)' info label."""
+        image = np.asarray(image)
+        if image.ndim < 2:
+            return
+        height, width = int(image.shape[0]), int(image.shape[1])
+        ppi = 72.0
+        if self._current_input_path:
+            try:
+                ppi = read_image_ppi(self._current_input_path)
+            except (OSError, ValueError):
+                ppi = 72.0
+        set_image_info_text(
+            self._viewer,
+            trf('{width} px × {height} px ({ppi} ppi)',
+                width=width, height=height, ppi=f'{ppi:g}'),
+        )
 
     def _update_preview_cache(
         self,
@@ -761,6 +914,8 @@ class GuiController:
             output_cctf_encoding=True,
             use_display_transform=result.use_display_transform,
         )
+        if self._compare_active:
+            self._refresh_compare_layer()
         if report_status:
             set_status(
                 self._viewer,

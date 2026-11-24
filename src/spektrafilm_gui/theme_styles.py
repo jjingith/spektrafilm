@@ -26,6 +26,7 @@ from spektrafilm_gui.theme_palette import (
     SIZE_COMPACT_BUTTON_MIN_HEIGHT,
     SIZE_CONTROL_MIN_HEIGHT,
     SIZE_CONTROL_PADDING,
+    SIZE_FOOTER_ITEM_SPACING,
     SIZE_FOOTER_MIN_HEIGHT,
     SIZE_FORM_SPACING,
     SIZE_HEADER_PADDING,
@@ -401,5 +402,12 @@ QStatusBar {{
 
 QStatusBar::item {{
     border: none;
+}}
+
+QLabel#imageInfoLabel {{
+    background: {STATUS_BG};
+    color: {TEXT_STATUS};
+    padding: 0 {SIZE_FOOTER_ITEM_SPACING};
+    min-height: {SIZE_FOOTER_MIN_HEIGHT};
 }}
 """

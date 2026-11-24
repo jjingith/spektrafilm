@@ -8,6 +8,12 @@
 - **可切回英文**：设置环境变量 `SPEKTRAFILM_LANG=en` 即可恢复英文界面，内部参数键与配置文件格式不变。
 - **CUDA GPU 加速（可选）**：使用 CuPy 加速光谱密度投影，也就是印放曝光与扫描这两个最重的逐像素光谱积分阶段；没有 CuPy 或 CUDA 时自动回退 CPU。
 - **数值对齐验证**：GPU 路径与 CPU 路径在小图上逐像素一致（float64 路径最大绝对误差 5.3e-14），大图使用 float32 以换取速度。
+- **RAW 加载提速**：色彩链（白平衡色适应、ACES→输出色彩空间）改为预计算 3×3 矩阵 + einsum，数值逐位一致；真实 61MP ARW 完整加载 9.75 s → 4.9 s。加载分两级：先半尺寸快速预览（约 1 s）显示，再后台线程完成全分辨率。
+- **界面增强**：左下角图像尺寸/PPI 信息栏、EXIF 查看按钮、前后对比（A/B 滑条，左原图右输出）、设置页「系统」类别（语言 / GPU 开关）、窗口与任务栏图标。
+
+## 绿色解压版（免安装）
+
+从 [Releases](https://github.com/jjingith/spektrafilm/releases) 下载 `spektrafilm-portable-*.zip`，解压后双击 `spektrafilm.exe` 即可，无需安装 Python 或依赖。语言与 GPU 开关在「设置 → 系统」，修改后重启生效。启动失败会在同目录生成 `spektrafilm_crash.log`。
 
 ## 汉化范围
 

@@ -307,15 +307,32 @@ def build_main_window_for_app(
     controls_panel = build_controls_panel_fn(viewer, widgets)
     if controller is None:
         return build_main_window_fn(viewer, controls_panel)
+    # Only forward callbacks the controller actually provides, so lightweight
+    # controllers in tests keep the exact original keyword set.
+    extra_callbacks = {}
+    for kwarg, attr in (
+        ('on_show_exif', 'show_exif_info'),
+        ('on_compare_toggled', 'set_compare_enabled'),
+        ('on_compare_changed', 'set_compare_split'),
+    ):
+        handler = getattr(controller, attr, None)
+        if handler is not None:
+            extra_callbacks[kwarg] = handler
+
     return build_main_window_fn(
         viewer,
         controls_panel,
         on_rotate_ccw=controller.rotate_input_image_counterclockwise,
         on_rotate_cw=controller.rotate_input_image_clockwise,
+        **extra_callbacks,
     )
 
 
 def create_app() -> GuiApp:
+    from spektrafilm_gui.font_fix import apply_font_path_fix
+    apply_font_path_fix()
+    from spektrafilm_gui.system_prefs import apply_to_environment
+    apply_to_environment()
     _set_numeric_locale()
     viewer = _create_viewer()
     _install_qt_translator()
@@ -325,6 +342,10 @@ def create_app() -> GuiApp:
     apply_gui_state(gui_state, widgets=widgets)
     _warmup_launch_input_path(gui_state)
     controller = initialize_controller(viewer=viewer, widgets=widgets)
+    system_section = getattr(widgets, 'system', None)
+    system_handler = getattr(controller, 'on_system_settings_changed', None)
+    if system_section is not None and system_handler is not None:
+        system_section.settings_changed.connect(system_handler)
     main_window = build_main_window_for_app(viewer=viewer, widgets=widgets, controller=controller)
     apply_widget_translations(main_window)
     _schedule_background_warmup()

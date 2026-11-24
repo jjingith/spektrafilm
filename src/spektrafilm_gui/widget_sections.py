@@ -621,6 +621,52 @@ class GuiConfigSection(QWidget):
         _set_single_collapsible_layout(self, 'GUI parameters', content, expanded=True)
 
 
+class SystemSection(QWidget):
+    """Language / GPU preference controls (require restart to take effect)."""
+    settings_changed = Signal()
+    SECTION_NAME = 'system'
+    TITLE = 'System'
+
+    def __init__(self):
+        super().__init__()
+        from spektrafilm_gui.system_prefs import (
+            AppLanguage, GpuMode, read_gpu, read_language, write_gpu, write_language,
+        )
+        self._AppLanguage = AppLanguage
+        self._GpuMode = GpuMode
+        self._write_language = write_language
+        self._write_gpu = write_gpu
+
+        self.language_editor = EnumEditor([member.value for member in AppLanguage])
+        self.gpu_editor = EnumEditor([member.value for member in GpuMode])
+        self.language_editor.value = read_language().value
+        self.gpu_editor.value = read_gpu().value
+
+        self.language_editor.currentIndexChanged.connect(self._on_language_changed)
+        self.gpu_editor.currentIndexChanged.connect(self._on_gpu_changed)
+
+        form = _new_form_layout()
+        form.addRow(_build_widget_label('system', 'language'), self.language_editor)
+        form.addRow(_build_widget_label('system', 'gpu'), self.gpu_editor)
+        # Expanded by default so the language / GPU choices are immediately
+        # discoverable in the settings tab.
+        self.setLayout(_build_collapsible_form_section(self.TITLE, form, expanded=True))
+
+    def _on_language_changed(self, *_args) -> None:
+        try:
+            self._write_language(self._AppLanguage(self.language_editor.value))
+        except ValueError:
+            return
+        self.settings_changed.emit()
+
+    def _on_gpu_changed(self, *_args) -> None:
+        try:
+            self._write_gpu(self._GpuMode(self.gpu_editor.value))
+        except ValueError:
+            return
+        self.settings_changed.emit()
+
+
 class DisplaySection(QWidget):
     _is_params_group = True
     _skip_auto_preview_leaves = {'preview_max_size', 'output_interpolation'}

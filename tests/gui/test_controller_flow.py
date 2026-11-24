@@ -268,13 +268,15 @@ def test_load_raw_image_uses_pipeline_input_settings_and_builds_preview_stack(mo
     assert captured['status'] == ('Loading raw...', 0)
     assert captured['path'] == 'C:/tmp/example.nef'
     assert captured['kwargs'] == {
+        'lens_info_out': {},
+        'half_size': True,
+        'demosaic_quality': 0,
         'white_balance': 'custom',
         'temperature': 3200.0,
         'tint': 0.85,
         'lens_correction': False,
         'output_colorspace': 'Display P3',
         'output_cctf_encoding': True,
-        'lens_info_out': {},
     }
     assert len(viewer.layers) == 4
     assert [layer.name for layer in viewer.layers[-3:]] == [

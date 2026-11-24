@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Callable
 from typing import Any, cast
@@ -45,14 +46,43 @@ class AppMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._viewer_status_bar: QStatusBar | None = None
+        self._image_info_label: QtWidgets.QLabel | None = None
 
     def set_viewer_status_bar(self, status_bar: QStatusBar) -> None:
         self._viewer_status_bar = status_bar
+
+    def set_image_info_label(self, label: QtWidgets.QLabel) -> None:
+        self._image_info_label = label
+
+    def image_info_label(self) -> QtWidgets.QLabel | None:
+        return self._image_info_label
 
     def statusBar(self) -> QStatusBar:  # noqa: N802 - Qt API name
         if self._viewer_status_bar is not None:
             return self._viewer_status_bar
         return super().statusBar()
+
+def _app_window_icon() -> QIcon:
+    """Load the app icon for the window title bar and Windows taskbar.
+
+    PyInstaller one-dir unpacks data under sys._MEIPASS, while source runs use
+    the package directory; check both.
+    """
+    candidates: list[Path] = []
+    bases = [Path(__file__).resolve().parent]
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        bases.append(Path(meipass) / 'spektrafilm_gui')
+    for base in bases:
+        candidates.append(base / 'assets' / 'app_icon.ico')
+        candidates.append(base / 'assets' / 'app_icon.png')
+    for candidate in candidates:
+        if candidate.is_file():
+            icon = QIcon(str(candidate))
+            if not icon.isNull():
+                return icon
+    return QIcon()
+
 
 def _get_current_stylesheet() -> str:
     try:
@@ -209,7 +239,8 @@ def _build_controls_tab(*widgets: QWidget) -> QWidget:
     layout.setContentsMargins(0, SIZE_TAB_CONTENT_TOP_MARGIN, 0, 0)
     layout.setAlignment(Qt.AlignTop)
     for widget in widgets:
-        layout.addWidget(widget)
+        if widget is not None:
+            layout.addWidget(widget)
     return tab
 
 
@@ -322,6 +353,9 @@ def _build_viewer_panel(
     *,
     on_rotate_ccw: Callable[[], None] | None = None,
     on_rotate_cw: Callable[[], None] | None = None,
+    on_show_exif: Callable[[], None] | None = None,
+    on_compare_toggled: Callable[[bool], None] | None = None,
+    on_compare_changed: Callable[[float], None] | None = None,
     on_zoom_100: Callable[[], None] | None = None,
     on_zoom_200: Callable[[], None] | None = None,
     on_zoom_400: Callable[[], None] | None = None,
@@ -337,6 +371,14 @@ def _build_viewer_panel(
     status_layout.setSpacing(SIZE_FOOTER_ITEM_SPACING)
     status_bar.setContentsMargins(0, 0, 0, 0)
     status_bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+    image_info_label = QtWidgets.QLabel('')
+    image_info_label.setObjectName('imageInfoLabel')
+    image_info_label.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    status_layout.addWidget(image_info_label)
+    # Expose to the main window so controller can update it after image load.
+    setattr(status_bar, '_image_info_label', image_info_label)
+
     status_layout.addWidget(status_bar, 1)
 
     rotate_ccw_button = QPushButton('ccw rotate')
@@ -348,6 +390,29 @@ def _build_viewer_panel(
     rotate_cw_button.setObjectName('rotateCwButton')
     if on_rotate_cw is not None:
         rotate_cw_button.clicked.connect(on_rotate_cw)
+
+    exif_button = QPushButton('EXIF')
+    exif_button.setObjectName('showExifButton')
+    exif_button.setToolTip('Show EXIF information of the current image')
+    if on_show_exif is not None:
+        exif_button.clicked.connect(on_show_exif)
+
+    compare_button = QPushButton('A/B')
+    compare_button.setObjectName('compareToggleButton')
+    compare_button.setCheckable(True)
+    compare_button.setToolTip('Toggle before/after comparison')
+    compare_slider = QtWidgets.QSlider(Qt.Horizontal)
+    compare_slider.setObjectName('compareSlider')
+    compare_slider.setRange(0, 100)
+    compare_slider.setValue(50)
+    compare_slider.setFixedWidth(120)
+    compare_slider.setEnabled(False)
+    compare_slider.setToolTip('Before/after split: left = input, right = output')
+    if on_compare_toggled is not None:
+        compare_button.toggled.connect(on_compare_toggled)
+        compare_button.toggled.connect(compare_slider.setEnabled)
+    if on_compare_changed is not None:
+        compare_slider.valueChanged.connect(lambda v: on_compare_changed(v / 100.0))
 
     zoom_100_button = QPushButton('100%')
     zoom_100_button.setObjectName('zoom100Button')
@@ -374,6 +439,9 @@ def _build_viewer_panel(
     row_height = int(SIZE_FOOTER_MIN_HEIGHT.removesuffix('px'))
     rotate_ccw_button.setFixedHeight(row_height)
     rotate_cw_button.setFixedHeight(row_height)
+    exif_button.setFixedHeight(row_height)
+    compare_button.setFixedHeight(row_height)
+    compare_slider.setFixedHeight(row_height)
     zoom_100_button.setFixedHeight(row_height)
     zoom_200_button.setFixedHeight(row_height)
     zoom_400_button.setFixedHeight(row_height)
@@ -382,6 +450,9 @@ def _build_viewer_panel(
     status_container.setFixedHeight(row_height)
     status_layout.addWidget(rotate_ccw_button)
     status_layout.addWidget(rotate_cw_button)
+    status_layout.addWidget(exif_button)
+    status_layout.addWidget(compare_button)
+    status_layout.addWidget(compare_slider)
     status_layout.addWidget(zoom_100_button)
     status_layout.addWidget(zoom_200_button)
     status_layout.addWidget(zoom_400_button)
@@ -450,6 +521,7 @@ def build_controls_panel(viewer: napari.Viewer, widgets: WidgetBundle) -> QWidge
         _wrap_scrollable(
             _build_controls_tab(
                 widgets.gui_config,
+                widgets.system,
                 widgets.display,
                 CollapsibleSection('napari layers', napari_layers_content, expanded=False),
             ),
@@ -473,6 +545,9 @@ def build_main_window(
     *,
     on_rotate_ccw: Callable[[], None] | None = None,
     on_rotate_cw: Callable[[], None] | None = None,
+    on_show_exif: Callable[[], None] | None = None,
+    on_compare_toggled: Callable[[bool], None] | None = None,
+    on_compare_changed: Callable[[float], None] | None = None,
 ) -> QMainWindow:
     viewer_widget = take_viewer_widget(viewer)
     status_bar = QtWidgets.QStatusBar()
@@ -480,7 +555,7 @@ def build_main_window(
 
     main_window = AppMainWindow()
     main_window.setWindowTitle('spektrafilm')
-    main_window.setWindowIcon(QIcon())
+    main_window.setWindowIcon(_app_window_icon())
     main_window.resize(DEFAULT_CONTROLS_PANEL_WIDTH + DEFAULT_VIEWER_SPLITTER_WIDTH, 980)
     main_window.setFont(platform_default_font())
     main_window.setStyleSheet(APP_STYLE_SHEET)
@@ -495,6 +570,9 @@ def build_main_window(
             status_bar,
             on_rotate_ccw=on_rotate_ccw,
             on_rotate_cw=on_rotate_cw,
+            on_show_exif=on_show_exif,
+            on_compare_toggled=on_compare_toggled,
+            on_compare_changed=on_compare_changed,
             on_zoom_100=lambda: set_viewer_zoom_percent(viewer, 100.0),
             on_zoom_200=lambda: set_viewer_zoom_percent(viewer, 200.0),
             on_zoom_400=lambda: set_viewer_zoom_percent(viewer, 400.0),
@@ -505,6 +583,12 @@ def build_main_window(
     splitter.setStretchFactor(0, 1)
     splitter.setStretchFactor(1, 0)
     splitter.setSizes([DEFAULT_VIEWER_SPLITTER_WIDTH, DEFAULT_CONTROLS_PANEL_WIDTH])
+
+    # The info label is created inside _build_viewer_panel above, so bind it
+    # after the panel exists (reading it earlier always returned None).
+    info_label = getattr(status_bar, '_image_info_label', None)
+    if info_label is not None:
+        main_window.set_image_info_label(info_label)
 
     central = QtWidgets.QWidget()
     central.setObjectName('appCentral')
@@ -529,6 +613,22 @@ def set_status(viewer: napari.Viewer, message: str, *, timeout_ms: int = 5000) -
     status_bar = host_window.statusBar() if hasattr(host_window, 'statusBar') else None
     if status_bar is not None:
         status_bar.showMessage(tr(message), timeout_ms)
+
+
+def set_image_info_text(viewer: napari.Viewer, text: str) -> None:
+    """Set the persistent bottom-left image info label (size / PPI)."""
+    host_window = cast(Any, _host_window(viewer))
+    if host_window is None:
+        return
+    label_getter = getattr(host_window, 'image_info_label', None)
+    label = label_getter() if callable(label_getter) else None
+    if label is None:
+        status_bar = host_window.statusBar() if hasattr(host_window, 'statusBar') else None
+        label = getattr(status_bar, '_image_info_label', None)
+    if label is not None:
+        label.setText(text)
+        label.adjustSize()
+        label.updateGeometry()
 
 
 def show_viewer_window(viewer: napari.Viewer) -> None:

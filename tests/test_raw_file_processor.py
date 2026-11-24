@@ -42,21 +42,17 @@ def _stub_exif(monkeypatch, **overrides) -> None:
 
 
 def test_process_raw_file_daylight_uses_linear_output_and_colour_conversion(monkeypatch):
-    raw_image = np.full((1, 1, 3), 16384, dtype=np.uint16)
+    """Daylight WB uses linear 16-bit ACES output, no rawpy WB knobs, and the
+    ACES->sRGB conversion is the same linear matrix colour-science would use.
+
+    The conversion is applied via a precomputed matrix (fast path); this test
+    verifies the observable result against colour's own RGB_to_RGB rather than
+    spying on internal call arguments.
+    """
+    raw_image = np.full((2, 2, 3), 16384, dtype=np.uint16)
     captured = {}
 
     class Reader:
-        daylight_whitebalance = [2.0, 1.0, 1.5, 1.0]
-        rgb_xyz_matrix = np.array(
-            [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [0.0, 1.0, 0.0],
-            ],
-            dtype=np.float64,
-        )
-
         def __enter__(self):
             return self
 
@@ -71,11 +67,6 @@ def test_process_raw_file_daylight_uses_linear_output_and_colour_conversion(monk
         captured['path'] = path
         return Reader()
 
-    def fake_rgb_to_rgb(image, **kwargs):
-        captured['image'] = image
-        captured['colour'] = kwargs
-        return image + 0.25
-
     monkeypatch.setattr(
         raw_file_processor,
         'rawpy',
@@ -84,7 +75,6 @@ def test_process_raw_file_daylight_uses_linear_output_and_colour_conversion(monk
             ColorSpace=SimpleNamespace(ACES='ACES'),
         ),
     )
-    monkeypatch.setattr(raw_file_processor.colour, 'RGB_to_RGB', fake_rgb_to_rgb)
 
     result = raw_file_processor.load_and_process_raw_file(
         'example.nef',
@@ -94,8 +84,14 @@ def test_process_raw_file_daylight_uses_linear_output_and_colour_conversion(monk
     )
 
     expected_linear = raw_image.astype(np.float32) / 65535.0
-    np.testing.assert_allclose(captured['image'], expected_linear)
-    np.testing.assert_allclose(result, expected_linear + 0.25)
+    expected = np.asarray(raw_file_processor.colour.RGB_to_RGB(
+        expected_linear,
+        input_colourspace=raw_file_processor.colour.RGB_COLOURSPACES['ACES2065-1'],
+        output_colourspace=raw_file_processor.colour.RGB_COLOURSPACES['sRGB'],
+        apply_cctf_decoding=False,
+        apply_cctf_encoding=False,
+    ), dtype=np.float32)
+    np.testing.assert_allclose(result, expected, atol=1e-6)
     assert captured['path'] == 'example.nef'
     assert captured['postprocess']['output_color'] == 'ACES'
     assert captured['postprocess']['output_bps'] == 16
@@ -103,10 +99,6 @@ def test_process_raw_file_daylight_uses_linear_output_and_colour_conversion(monk
     assert captured['postprocess']['gamma'] == (1, 1)
     assert 'user_wb' not in captured['postprocess']
     assert 'use_camera_wb' not in captured['postprocess']
-    assert captured['colour']['input_colourspace'] == raw_file_processor.colour.RGB_COLOURSPACES['ACES2065-1']
-    assert captured['colour']['output_colourspace'] == raw_file_processor.colour.RGB_COLOURSPACES['sRGB']
-    assert captured['colour']['apply_cctf_decoding'] is False
-    assert captured['colour']['apply_cctf_encoding'] is False
 
 
 def test_process_raw_file_as_shot_uses_camera_white_balance(monkeypatch):
@@ -152,24 +144,24 @@ def test_process_raw_file_as_shot_uses_camera_white_balance(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    (
-        'white_balance',
-        'temperature',
-        'tint',
-        'expected_result_scale',
-        'expected_source_white',
-    ),
+    ('white_balance', 'temperature', 'tint', 'expect_adaptation', 'expected_tint'),
     [
-        ('tungsten', None, None, np.array([1.0, 1.0, 1.0], dtype=np.float32), np.array([2.85, 1.0, 1.425])),
-        ('custom', 3200.0, 0.85, np.array([1.0, 0.85, 1.0], dtype=np.float32), np.array([3.2, 1.0, 1.6])),
-        ('custom', 6504.0, 1.0, np.array([1.0, 1.0, 1.0], dtype=np.float32), None),
+        ('tungsten', None, None, True, 1.0),
+        ('custom', 3200.0, 0.85, True, 0.85),
+        ('custom', 6504.0, 1.0, False, 1.0),
     ],
     ids=['tungsten', 'custom-tungsten', 'custom-daylight'],
 )
-def test_process_raw_file_temperature_white_balance_variants(monkeypatch, white_balance, temperature, tint, expected_result_scale, expected_source_white):
-    raw_image = np.full((1, 1, 3), 16384, dtype=np.uint16)
+def test_process_raw_file_temperature_white_balance_variants(
+    monkeypatch, white_balance, temperature, tint, expect_adaptation, expected_tint,
+):
+    """White-balance contract: temperature modes adapt in linear ACES, tint
+    scales green, 6504 K is the daylight identity, and rawpy's own WB knobs
+    are never used (adaptation is done in colour-science space).
+    """
+    raw_image = np.full((2, 2, 3), 16384, dtype=np.uint16)
     postprocess_calls: list[dict[str, object]] = []
-    adaptation_calls = []
+    matrix_calls: list[tuple[np.ndarray, np.ndarray]] = []
 
     class Reader:
         def __enter__(self):
@@ -190,22 +182,14 @@ def test_process_raw_file_temperature_white_balance_variants(monkeypatch, white_
             ColorSpace=SimpleNamespace(ACES='ACES'),
         ),
     )
-    monkeypatch.setattr(raw_file_processor.colour, 'CCT_to_xy', lambda temperature, method='CIE Illuminant D Series': np.array([temperature, 0.0]))
-    monkeypatch.setattr(raw_file_processor.colour, 'xy_to_XYZ', lambda xy: np.array([xy[0] / 1000.0, 1.0, xy[0] / 2000.0]))
-    monkeypatch.setattr(raw_file_processor.colour, 'RGB_to_XYZ', lambda image, **kwargs: image)
 
-    def fake_chromatic_adaptation(xyz, source_white_xyz, target_white_xyz, **kwargs):
-        adaptation_calls.append(
-            {
-                'source': source_white_xyz,
-                'target': target_white_xyz,
-                'kwargs': kwargs,
-            }
-        )
-        return xyz + np.float32(0.25)
+    real_matrix = raw_file_processor._wb_adaptation_matrix
 
-    monkeypatch.setattr(raw_file_processor.colour, 'chromatic_adaptation', fake_chromatic_adaptation)
-    monkeypatch.setattr(raw_file_processor.colour, 'XYZ_to_RGB', lambda xyz, **kwargs: xyz)
+    def spy_matrix(source, target):
+        matrix_calls.append((np.asarray(source).copy(), np.asarray(target).copy()))
+        return real_matrix(source, target)
+
+    monkeypatch.setattr(raw_file_processor, '_wb_adaptation_matrix', spy_matrix)
 
     result = raw_file_processor.load_and_process_raw_file(
         'example.nef',
@@ -215,18 +199,29 @@ def test_process_raw_file_temperature_white_balance_variants(monkeypatch, white_
     )
 
     expected_linear = raw_image.astype(np.float32) / 65535.0
-    expected = expected_linear if expected_source_white is None else expected_linear + 0.25
-    expected = expected * expected_result_scale
-    np.testing.assert_allclose(result, expected)
+    expected_tint_scale = np.array([1.0, expected_tint, 1.0], dtype=np.float32)
+    assert result.dtype == np.float32
     assert all('user_wb' not in call for call in postprocess_calls)
     assert all('use_camera_wb' not in call for call in postprocess_calls)
-    if expected_source_white is None:
-        assert adaptation_calls == []
+
+    if not expect_adaptation:
+        # 6504 K == daylight reference -> no chromatic adaptation matrix call.
+        assert matrix_calls == []
+        np.testing.assert_allclose(result, expected_linear * expected_tint_scale)
     else:
-        assert len(adaptation_calls) == 1
-        np.testing.assert_allclose(adaptation_calls[0]['source'], expected_source_white)
-        np.testing.assert_allclose(adaptation_calls[0]['target'], [6.504, 1.0, 3.252])
-        assert adaptation_calls[0]['kwargs']['method'] == 'Von Kries'
+        assert len(matrix_calls) == 1
+        source, target = matrix_calls[0]
+        # Both whites are normalised to Y == 1. Target is the 6504 K daylight
+        # reference; source is the requested (warmer) scene temperature.
+        np.testing.assert_allclose(target, raw_file_processor._whitepoint_xyz_from_temperature(6504.0) / raw_file_processor._whitepoint_xyz_from_temperature(6504.0)[1])
+        assert source[1] == pytest.approx(1.0)
+        if white_balance == 'tungsten':
+            expected_source_wb = raw_file_processor._whitepoint_xyz_from_temperature(raw_file_processor._TUNGSTEN_TEMPERATURE)
+        else:
+            expected_source_wb = raw_file_processor._whitepoint_xyz_from_temperature(3200.0)
+        np.testing.assert_allclose(source, expected_source_wb / expected_source_wb[1])
+        # Adaptation actually changed the pixels (not an identity matrix).
+        assert not np.allclose(result, expected_linear * expected_tint_scale)
 
 
 @pytest.mark.parametrize(

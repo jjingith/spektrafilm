@@ -28,11 +28,13 @@ INPUT_PREVIEW_LAYER_NAME = 'input_preview'
 WHITE_BORDER_LAYER_NAME = 'white_border'
 WATERMARK_LAYER_NAME = 'watermark'
 OUTPUT_LAYER_NAME = 'output'
+COMPARE_LAYER_NAME = 'before_after_compare'
 STACK_LAYER_ORDER = (
     WHITE_BORDER_LAYER_NAME,
     WATERMARK_LAYER_NAME,
     INPUT_PREVIEW_LAYER_NAME,
     OUTPUT_LAYER_NAME,
+    COMPARE_LAYER_NAME,
 )
 OUTPUT_LAYER_ANIMATION_DURATION_MS = 1600
 OUTPUT_LAYER_ANIMATION_INTERVAL_MS = 32
@@ -90,6 +92,36 @@ def is_napari_image_layer(layer: object) -> bool:
     except ImportError:
         return False
     return isinstance(layer, NapariImageLayer)
+
+
+def _to_float_rgb(image: np.ndarray) -> np.ndarray:
+    """Convert an image layer's data to float32 RGB in 0..1 for compositing."""
+    data = np.asarray(image)
+    if data.ndim == 2:
+        data = np.stack([data, data, data], axis=-1)
+    data = data[..., :3]
+    if np.issubdtype(data.dtype, np.integer):
+        data = data.astype(np.float32) / np.float32(np.iinfo(data.dtype).max)
+    else:
+        data = data.astype(np.float32)
+    return np.clip(data, 0.0, 1.0)
+
+
+def _resize_rgb(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Nearest-neighbour resize of an RGB image to (height, width)."""
+    try:
+        from skimage.transform import resize
+        return resize(
+            image,
+            (shape[0], shape[1], 3),
+            order=0,
+            preserve_range=True,
+            anti_aliasing=False,
+        ).astype(np.float32)
+    except Exception:
+        rows = np.linspace(0, image.shape[0] - 1, shape[0]).astype(int)
+        cols = np.linspace(0, image.shape[1] - 1, shape[1]).astype(int)
+        return image[rows[:, None], cols[None, :]]
 
 
 def _normalized_world_size(image: np.ndarray) -> tuple[float, float]:
@@ -425,6 +457,48 @@ class ViewerLayerService:
             )
         else:
             _refresh_layer(layer)
+
+    def set_compare_layer(
+        self,
+        before: np.ndarray,
+        after: np.ndarray,
+        *,
+        split: float,
+        image_world_size: tuple[float, float] | None,
+    ) -> None:
+        """Show a before/after wipe in a dedicated layer.
+
+        ``split`` in [0, 1]: 0 = all after (output), 1 = all before (input).
+        Left of the divider shows ``before``; right shows ``after``.
+        """
+        before = np.asarray(before)
+        after = np.asarray(after)
+        if before.ndim < 2 or after.ndim < 2:
+            return
+        # Normalize both to 0..1 float RGB at the same size.
+        before_f = _to_float_rgb(before)
+        after_f = _to_float_rgb(after)
+        target_shape = before_f.shape[:2]
+        if after_f.shape[:2] != target_shape:
+            after_f = _resize_rgb(after_f, target_shape)
+        height, width = target_shape
+        split_x = int(round(width * max(0.0, min(1.0, float(split)))))
+
+        composite = np.empty((height, width, 3), dtype=np.float32)
+        composite[:, :split_x] = before_f[:, :split_x]
+        composite[:, split_x:] = after_f[:, split_x:]
+
+        layer = self._set_or_add_image_layer(composite, layer_name=COMPARE_LAYER_NAME)
+        world_size = image_world_size or _normalized_world_size(composite)
+        _set_layer_geometry(layer, world_size=_fit_image_world_size(composite, bounding_world_size=world_size))
+        if not layer.visible:
+            layer.visible = True
+        self.move_layer_to_top(layer)
+        self.set_active_layer(layer)
+        _refresh_layer(layer)
+
+    def remove_compare_layer(self) -> None:
+        self.hide_layer(COMPARE_LAYER_NAME)
 
     def output_layer(self) -> NapariImageLayer | None:
         layer = self.image_layer(OUTPUT_LAYER_NAME)

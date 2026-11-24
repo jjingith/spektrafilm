@@ -29,6 +29,7 @@ from spektrafilm_gui.widget_sections import (
     SimulationSection,
     SpecialSection,
     SpectralUpsamplingSection,
+    SystemSection,
     TuneSection,
 )
 
@@ -68,6 +69,9 @@ class WidgetBundle:
     spectral_upsampling: SpectralUpsamplingSection
     tune: TuneSection
     output: OutputSection
+    # Optional: system preferences (language / GPU). Kept last with a default so
+    # existing WidgetBundle(...) constructions in tests stay valid.
+    system: SystemSection | None = None
 
 
 def create_widget_bundle() -> WidgetBundle:
@@ -83,6 +87,7 @@ def create_widget_bundle() -> WidgetBundle:
     return WidgetBundle(
         filepicker=filepicker,
         gui_config=GuiConfigSection(),
+        system=SystemSection(),
         display=DisplaySection(),
         input_image=input_image,
         load_raw=LoadRawSection(),
