@@ -30,6 +30,18 @@ _qt_translator: Any | None = None
 WARMUP_IMAGE_SHAPE = (16, 16, 3)
 
 
+def _set_numeric_locale() -> None:
+    """Keep spin-box formatting on Latin digits.
+
+    The system ``zh_CN`` QLocale can render numbers with Hangzhou numerals
+    (〇〡〢…) on Windows; pinning the locale avoids unreadable parameter values.
+    """
+    if is_chinese():
+        QtCore.QLocale.setDefault(QtCore.QLocale(QtCore.QLocale.Chinese, QtCore.QLocale.China))
+    else:
+        QtCore.QLocale.setDefault(QtCore.QLocale(QtCore.QLocale.English, QtCore.QLocale.UnitedStates))
+
+
 def _install_qt_translator() -> None:
     global _qt_translator
 
@@ -304,6 +316,7 @@ def build_main_window_for_app(
 
 
 def create_app() -> GuiApp:
+    _set_numeric_locale()
     viewer = _create_viewer()
     _install_qt_translator()
     _apply_app_palette()
