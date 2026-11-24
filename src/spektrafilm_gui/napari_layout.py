@@ -19,6 +19,7 @@ QStatusBar = QtWidgets.QStatusBar
 QScrollArea = QtWidgets.QScrollArea
 QWidget = QtWidgets.QWidget
 
+from spektrafilm_gui.i18n import tr
 from spektrafilm_gui.theme import APP_STYLE_SHEET
 from spektrafilm_gui.theme_palette import (
     GRAY_0,
@@ -527,7 +528,7 @@ def set_status(viewer: napari.Viewer, message: str, *, timeout_ms: int = 5000) -
         return
     status_bar = host_window.statusBar() if hasattr(host_window, 'statusBar') else None
     if status_bar is not None:
-        status_bar.showMessage(message, timeout_ms)
+        status_bar.showMessage(tr(message), timeout_ms)
 
 
 def show_viewer_window(viewer: napari.Viewer) -> None:

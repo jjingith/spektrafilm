@@ -1,5 +1,8 @@
 ![spektrafilm banner](img/readme/banner.jpg)
 
+> **简体中文 / GPU 分支**：这是 [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm) 的非官方分支，提供简体中文界面与可选 CUDA 加速。安装、语言切换、GPU 开关和当前覆盖范围见 [README.zh-CN.md](README.zh-CN.md)。上游英文文档从下方开始。
+
+
 > [!WARNING]
 >
 > **I love building spektrafilm**, and I invested already hundreds of hours in it. Right now it’s a nights-and-weekends project. If it will help pay some bills, I can keep improving it for everyone. 🙂 Any **support** is really appreciated: [Buy me a coffee](https://buymeacoffee.com/andreavolpato)

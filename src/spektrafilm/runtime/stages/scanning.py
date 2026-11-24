@@ -11,6 +11,7 @@ from spektrafilm.model.glare import add_glare
 from spektrafilm.model.illuminants import standard_illuminant
 from spektrafilm.utils.conversions import density_to_light
 from spektrafilm.utils.gamut_compression import compress_rgb
+from spektrafilm.utils.gpu import project_log
 
 
 class ScanningStage:
@@ -110,6 +111,17 @@ class ScanningStage:
         normalization = np.sum(scan_illuminant * STANDARD_OBSERVER_CMFS[:, 1], axis=0)
 
         def cmy_to_log_xyz(density_cmy: np.ndarray) -> np.ndarray:
+            gpu_result = project_log(
+                density_cmy,
+                channel_density,
+                base_density,
+                scan_illuminant,
+                STANDARD_OBSERVER_CMFS[:],
+                scale=1.0 / normalization,
+            )
+            if gpu_result is not None:
+                return gpu_result
+
             density_spectral = compute_density_spectral(
                 channel_density,
                 density_cmy,

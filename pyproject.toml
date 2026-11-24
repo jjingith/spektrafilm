@@ -49,6 +49,10 @@ dev = [
     "pytest",
     "opencolorio~=2.5",   # PyOpenColorIO; validates emitted config.ocio files
 ]
+# Optional CUDA acceleration for the spectral density projection stages.
+gpu = [
+    "cupy-cuda12x>=14.0",
+]
 
 [project.scripts]
 spektrafilm = "spektrafilm_gui.app:main"
@@ -74,5 +78,6 @@ spektrafilm = [
 ]
 spektrafilm_gui = [
     "assets/*",
+    "locale/*.json",
 ]
 

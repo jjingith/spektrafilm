@@ -6,6 +6,7 @@ import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 
 from spektrafilm_gui.controller import GuiController
+from spektrafilm_gui.i18n import apply_widget_translations, is_chinese
 from spektrafilm_gui.napari_layout import (
     build_controls_panel,
     build_main_window,
@@ -25,7 +26,24 @@ QTimer = getattr(QtCore, 'QTimer')
 _background_warmup_started = False
 _background_warmup_scheduled = False
 _background_warmup_pool: Any | None = None
+_qt_translator: Any | None = None
 WARMUP_IMAGE_SHAPE = (16, 16, 3)
+
+
+def _install_qt_translator() -> None:
+    global _qt_translator
+
+    if not is_chinese() or _qt_translator is not None:
+        return
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return
+
+    translations_path = QtCore.QLibraryInfo.path(QtCore.QLibraryInfo.TranslationsPath)
+    translator = QtCore.QTranslator(app)
+    if translator.load('qtbase_zh_CN', translations_path) or translator.load('qt_zh_CN', translations_path):
+        app.installTranslator(translator)
+        _qt_translator = translator
 
 @dataclass(slots=True)
 class GuiApp:
@@ -287,6 +305,7 @@ def build_main_window_for_app(
 
 def create_app() -> GuiApp:
     viewer = _create_viewer()
+    _install_qt_translator()
     _apply_app_palette()
     widgets = _create_widgets()
     gui_state = load_default_gui_state()
@@ -294,6 +313,7 @@ def create_app() -> GuiApp:
     _warmup_launch_input_path(gui_state)
     controller = initialize_controller(viewer=viewer, widgets=widgets)
     main_window = build_main_window_for_app(viewer=viewer, widgets=widgets, controller=controller)
+    apply_widget_translations(main_window)
     _schedule_background_warmup()
     return GuiApp(
         viewer=viewer,
