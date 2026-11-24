@@ -10,8 +10,8 @@ _CUPY_CHECKED = False
 
 
 def gpu_requested() -> bool:
-    value = os.environ.get("SPEKTRAFILM_GPU", "").strip().lower()
-    return value not in {"", "0", "false", "off", "no", "cpu"}
+    value = os.environ.get("SPEKTRAFILM_GPU", "auto").strip().lower()
+    return value not in {"0", "false", "off", "no", "cpu"}
 
 
 def _load_cupy() -> Any | None:

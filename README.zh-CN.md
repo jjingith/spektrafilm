@@ -58,18 +58,19 @@ spektrafilm
 
 ### GPU
 
+安装 `[gpu]` 可选依赖后默认自动使用 GPU；CuPy 不可用或没有 CUDA 设备时自动回退 CPU。
+
 ```bash
-SPEKTRAFILM_GPU=1 spektrafilm
+spektrafilm             # 自动：有 CuPy + CUDA 就用 GPU
+SPEKTRAFILM_GPU=0 spektrafilm   # 强制 CPU
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:SPEKTRAFILM_GPU = "1"
+$env:SPEKTRAFILM_GPU = "0"   # 强制 CPU；删除该变量恢复自动
 spektrafilm
 ```
-
-未设置 `SPEKTRAFILM_GPU`、CuPy 不可用或没有 CUDA 设备时，自动使用 CPU 路径。
 
 ## 当前 GPU 覆盖范围与实测
 
